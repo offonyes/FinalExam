@@ -6,7 +6,7 @@ using FinalExam.Models.DTO_s.Role;
 using FinalExam.Models.Entities;
 
 namespace FinalExam.Services
-{
+{   
     public class RoleService : IRoleService
     {
         private readonly ApplicationDbContext _context;
@@ -19,13 +19,19 @@ namespace FinalExam.Services
 
         public async Task<ServiceResponse<string>> CreateAsync(RoleCreateDTO dto)
         {
-            var mappedRole = _mapper.Map<Role>(dto);
+            var existing = await _context.Roles
+                .AnyAsync(r => r.Name.ToLower() == dto.Name.ToLower());
 
-            await _context.Roles.AddAsync(mappedRole);
+            if (existing)
+                return new ServiceResponse<string> { Data = "Role with this name already exists" };
+
+            var role = _mapper.Map<Role>(dto);
+            await _context.Roles.AddAsync(role);
             await _context.SaveChangesAsync();
 
             return new ServiceResponse<string> { Data = "Role added successfully" };
         }
+
         public async Task<ServiceResponse<List<RoleDTO>>> GetAllAsync()
         {
             var roles = await _context.Roles.ToListAsync();
@@ -46,19 +52,22 @@ namespace FinalExam.Services
         public async Task<ServiceResponse<string>> UpdateAsync(RoleUpdateDTO dto)
         {
             var role = await _context.Roles.FindAsync(dto.Id);
-
             if (role == null)
-            {
-                return new ServiceResponse<string> { Success = false, Message = "Role not found" };
-            }
+                return new ServiceResponse<string> { Data = "Role not found" };
+
+            var duplicate = await _context.Roles
+                .AnyAsync(r => r.Id != dto.Id && r.Name.ToLower() == dto.Name.ToLower());
+
+            if (duplicate)
+                return new ServiceResponse<string> { Data = "Another role with the same name already exists" };
 
             _mapper.Map(dto, role);
             role.LastModifiedDate = DateTime.Now;
 
             await _context.SaveChangesAsync();
-
             return new ServiceResponse<string> { Data = "Role updated successfully" };
         }
+
         public async Task<ServiceResponse<string>> DeleteAsync(int id)
         {
             var role = await _context.Roles.FindAsync(id);

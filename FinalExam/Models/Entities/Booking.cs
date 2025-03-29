@@ -24,10 +24,6 @@ namespace FinalExam.Models.Entities
 
         [Required]
         public DateTime CheckOutDate { get; set; }
-        // Delete
-        [Required]
-        [Column(TypeName = "decimal(18,2)")]
-        public decimal TotalPrice { get; set; }
 
         [Required]
         public BookingStatus Status { get; set; } = BookingStatus.Pending;

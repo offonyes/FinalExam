@@ -27,22 +27,16 @@ namespace FinalExam.Services
 
             var room = await _context.Rooms.FirstOrDefaultAsync(r => r.Id == dto.RoomId);
             if (room == null)
-            {
-                response.Success = false;
-                response.Message = "Room not found";
-                return response;
-            }
+                return Fail("Room not found");
 
             var validation = await ValidateBookingDatesAsync(0, dto.RoomId, dto.CheckInDate, dto.CheckOutDate);
             if (!validation.Success)
                 return validation;
 
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier));
-            var days = (dto.CheckOutDate - dto.CheckInDate).Days;
 
             var booking = _mapper.Map<Booking>(dto);
             booking.UserId = userId;
-            booking.TotalPrice = days * room.UnitPrice;
             booking.Status = BookingStatus.Pending;
 
             await _context.Bookings.AddAsync(booking);
@@ -58,13 +52,14 @@ namespace FinalExam.Services
             var booking = await _context.Bookings.FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId);
 
             if (booking == null)
-                return new ServiceResponse<string> { Success = false, Message = "Booking not found or access denied" };
+                return Fail("Booking not found or access denied");
 
             booking.Status = BookingStatus.Cancelled;
             await _context.SaveChangesAsync();
 
             return new ServiceResponse<string> { Data = "Booking cancelled" };
         }
+
         public async Task<ServiceResponse<string>> UpdateAsync(int id, BookingUpdateDTO dto, ClaimsPrincipal user)
         {
             var response = new ServiceResponse<string>();
@@ -75,22 +70,13 @@ namespace FinalExam.Services
                 .FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId);
 
             if (booking == null)
-            {
-                response.Success = false;
-                response.Message = "Booking not found or access denied";
-                return response;
-            }
+                return Fail("Booking not found or access denied");
 
             var validation = await ValidateBookingDatesAsync(booking.Id, booking.RoomId, dto.CheckInDate, dto.CheckOutDate);
             if (!validation.Success)
                 return validation;
 
-            var days = (dto.CheckOutDate - dto.CheckInDate).Days;
-
             _mapper.Map(dto, booking);
-            booking.TotalPrice = days * booking.Room.UnitPrice;
-
-            _context.Bookings.Update(booking);
             await _context.SaveChangesAsync();
 
             response.Data = "Booking updated successfully";
@@ -101,15 +87,17 @@ namespace FinalExam.Services
         {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier));
             var booking = await _context.Bookings
-                .Include(b => b.Room)
-                    .ThenInclude(r => r.RoomPhotos)
+                .Include(b => b.Room).ThenInclude(r => r.RoomPhotos)
                 .Include(b => b.User)
                 .FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId);
 
             if (booking == null)
-                return new ServiceResponse<BookingDTO> { Success = false, Message = "Booking not found" };
+                return Fail<BookingDTO>("Booking not found");
 
-            return new ServiceResponse<BookingDTO> { Data = _mapper.Map<BookingDTO>(booking) };
+            var dto = _mapper.Map<BookingDTO>(booking);
+            dto.TotalPrice = CalculateTotalPrice(booking);
+
+            return new ServiceResponse<BookingDTO> { Data = dto };
         }
 
         public async Task<ServiceResponse<List<BookingDTO>>> GetMyBookingsAsync(ClaimsPrincipal user)
@@ -117,52 +105,53 @@ namespace FinalExam.Services
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier));
 
             var bookings = await _context.Bookings
-                .Include(b => b.Room)
-                    .ThenInclude(r => r.RoomPhotos)
+                .Include(b => b.Room).ThenInclude(r => r.RoomPhotos)
                 .Include(b => b.User)
                 .Where(b => b.UserId == userId)
                 .ToListAsync();
 
-            return new ServiceResponse<List<BookingDTO>>
-            {
-                Data = _mapper.Map<List<BookingDTO>>(bookings)
-            };
+            var dtoList = _mapper.Map<List<BookingDTO>>(bookings);
+            for (int i = 0; i < dtoList.Count; i++)
+                dtoList[i].TotalPrice = CalculateTotalPrice(bookings[i]);
+
+            return new ServiceResponse<List<BookingDTO>> { Data = dtoList };
         }
 
         public async Task<ServiceResponse<List<BookingDTO>>> GetAllAsync()
         {
             var bookings = await _context.Bookings
-                .Include(b => b.Room)
-                    .ThenInclude(r => r.RoomPhotos)
+                .Include(b => b.Room).ThenInclude(r => r.RoomPhotos)
                 .Include(b => b.User)
                 .ToListAsync();
 
-            return new ServiceResponse<List<BookingDTO>>
-            {
-                Data = _mapper.Map<List<BookingDTO>>(bookings)
-            };
+            var dtoList = _mapper.Map<List<BookingDTO>>(bookings);
+            for (int i = 0; i < dtoList.Count; i++)
+                dtoList[i].TotalPrice = CalculateTotalPrice(bookings[i]);
+
+            return new ServiceResponse<List<BookingDTO>> { Data = dtoList };
         }
 
         public async Task<ServiceResponse<BookingDTO>> GetByIdAsync(int id)
         {
             var booking = await _context.Bookings
-                .Include(b => b.Room)
-                    .ThenInclude(r => r.RoomPhotos)
+                .Include(b => b.Room).ThenInclude(r => r.RoomPhotos)
                 .Include(b => b.User)
                 .FirstOrDefaultAsync(b => b.Id == id);
 
-
             if (booking == null)
-                return new ServiceResponse<BookingDTO> { Success = false, Message = "Booking not found" };
+                return Fail<BookingDTO>("Booking not found");
 
-            return new ServiceResponse<BookingDTO> { Data = _mapper.Map<BookingDTO>(booking) };
+            var dto = _mapper.Map<BookingDTO>(booking);
+            dto.TotalPrice = CalculateTotalPrice(booking);
+
+            return new ServiceResponse<BookingDTO> { Data = dto };
         }
 
         public async Task<ServiceResponse<string>> UpdateStatusAsync(int id, BookingUpdateStatusDTO dto)
         {
             var booking = await _context.Bookings.FindAsync(id);
             if (booking == null)
-                return new ServiceResponse<string> { Success = false, Message = "Booking not found" };
+                return Fail("Booking not found");
 
             booking.Status = dto.Status;
             await _context.SaveChangesAsync();
@@ -175,11 +164,7 @@ namespace FinalExam.Services
             var response = new ServiceResponse<List<RoomDTO>>();
 
             if (from.Date < DateTime.Today || to.Date <= from.Date)
-            {
-                response.Success = false;
-                response.Message = "Invalid date range";
-                return response;
-            }
+                return Fail<List<RoomDTO>>("Invalid date range");
 
             var bookedRoomIds = await _context.Bookings
                 .Where(b =>
@@ -199,25 +184,24 @@ namespace FinalExam.Services
             return response;
         }
 
-        #region Private Methods
+        #region Helpers
+
+        private decimal CalculateTotalPrice(Booking booking)
+        {
+            var days = (booking.CheckOutDate.Date - booking.CheckInDate.Date).Days;
+            return days * booking.Room.UnitPrice;
+        }
+
         private async Task<ServiceResponse<string>> ValidateBookingDatesAsync(int bookingId, int roomId, DateTime checkIn, DateTime checkOut)
         {
             var response = new ServiceResponse<string>();
 
             if (checkIn.Date < DateTime.Now.Date.AddDays(2))
-            {
-                response.Success = false;
-                response.Message = "Check-in date must be at least 2 days from today.";
-                return response;
-            }
+                return Fail("Check-in date must be at least 2 days from today.");
 
             var days = (checkOut - checkIn).Days;
             if (days <= 0)
-            {
-                response.Success = false;
-                response.Message = "Invalid date range: Check-out must be after Check-in.";
-                return response;
-            }
+                return Fail("Invalid date range: Check-out must be after Check-in.");
 
             var hasConflict = await _context.Bookings.AnyAsync(b =>
                 b.Id != bookingId &&
@@ -230,15 +214,21 @@ namespace FinalExam.Services
                 ));
 
             if (hasConflict)
-            {
-                response.Success = false;
-                response.Message = "Room is already booked for the selected dates.";
-                return response;
-            }
+                return Fail("Room is already booked for the selected dates.");
 
-            return response; 
+            return response;
         }
 
+        private ServiceResponse<T> Fail<T>(string message)
+        {
+            return new ServiceResponse<T> { Success = false, Message = message };
+        }
+
+        private ServiceResponse<string> Fail(string message)
+        {
+            return new ServiceResponse<string> { Success = false, Message = message };
+        }
+
+        #endregion
     }
-    #endregion
-}  
+}

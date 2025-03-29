@@ -9,7 +9,7 @@ namespace FinalExam.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    //[Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin")]
     public class RoleController : ControllerBase
     {
         private readonly IRoleService _roleService;

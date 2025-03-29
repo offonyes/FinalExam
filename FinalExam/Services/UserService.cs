@@ -23,124 +23,94 @@ namespace FinalExam.Services
 
         public async Task<ServiceResponse<int>> CreateAsync(UserCreateDTO dto)
         {
-            var response = new ServiceResponse<int>();
+            if (await _context.Users.AnyAsync(u => u.UserName.ToLower() == dto.UserName.ToLower()))
+                return new ServiceResponse<int> { Success = false, Message = "User already exists" };
 
-            if (await UserExists(dto.UserName))
-            {
-                response.Success = false;
-                response.Message = "User already exists";
-                return response;
-            }
+            CreatePasswordHash(dto.Password, out byte[] hash, out byte[] salt);
 
-            CreatePasswordHash(dto.Password, out byte[] passwordHash, out byte[] passwordSalt);
+            var roles = await _context.Roles
+                .Where(r => dto.RoleIds.Contains(r.Id))
+                .ToListAsync();
 
-            var user = new User()
+            var user = new User
             {
                 UserName = dto.UserName,
-                PasswordHash = passwordHash,
-                PasswordSalt = passwordSalt
+                PasswordHash = hash,
+                PasswordSalt = salt,
+                Roles = roles
             };
-
-            var roles = await _context.Roles.Where(x => dto.RoleIds.Contains(x.Id)).ToListAsync();
-
-            user.Roles = roles;
 
             await _context.Users.AddAsync(user);
             await _context.SaveChangesAsync();
 
-            response.Data = user.Id;
-            return response;
+            return new ServiceResponse<int> { Data = user.Id };
         }
 
         public async Task<ServiceResponse<string>> DeleteAsync(int id)
         {
-            try
-            {
-                var user = await _context.Users.FirstOrDefaultAsync(x => x.Id == id);
+            var user = await _context.Users.FindAsync(id);
+            if (user == null)
+                return new ServiceResponse<string> { Success = false, Message = "User not found" };
 
-                user.Status = Status.Deleted;
+            user.Status = Status.Deleted;
 
-                _context.Users.Update(user);
-                await _context.SaveChangesAsync();
+            _context.Users.Update(user);
+            await _context.SaveChangesAsync();
 
-                return new ServiceResponse<string>() { Data = "User deleted successfully" };
-            }
-            catch (Exception ex)
-            {
-                return new ServiceResponse<string>() { Success = false, Message = "ex.GetFullMessage()" };
-            }
+            return new ServiceResponse<string> { Data = "User deleted successfully" };
         }
 
         public async Task<ServiceResponse<List<UserDTO>>> GetAllAsync()
         {
-            var users = await _context.Users.Include(x => x.Roles).ToListAsync();
-            var test = false;
-            var notAdminUsers = new List<User>();
-            foreach (var user in users)
-            {
-                test = false;
-                var roles = user.Roles;
-                foreach (var role in roles)
-                {
-                    if (role.Name != "Admin")
-                    {
-                        test = true;
-                    }
-                }
-                if (test)
-                    notAdminUsers.Add(user);
-            }
+            var users = await _context.Users
+                .Include(u => u.Roles)
+                .Where(u => !u.Roles.Any(r => r.Name == "Admin"))
+                .ToListAsync();
 
-            return new ServiceResponse<List<UserDTO>>() { Data = users.Select(x => _mapper.Map<UserDTO>(x)).ToList() };
+            var result = _mapper.Map<List<UserDTO>>(users);
+            return new ServiceResponse<List<UserDTO>> { Data = result };
         }
 
         public async Task<ServiceResponse<UserDTO>> GetByIdAsync(int id)
         {
-            try
-            {
-                var user = await _context.Users.Include(x => x.Roles).FirstOrDefaultAsync(x => x.Id == id);
+            var user = await _context.Users
+                .Include(u => u.Roles)
+                .FirstOrDefaultAsync(u => u.Id == id);
 
-                return new ServiceResponse<UserDTO>() { Data = _mapper.Map<UserDTO>(user) };
-            }
-            catch (Exception ex)
-            {
-                return new ServiceResponse<UserDTO>() { Success = false, Message = "ex.GetFullMessage()" };
-            }
+            if (user == null)
+                return new ServiceResponse<UserDTO> { Success = false, Message = "User not found" };
+
+            return new ServiceResponse<UserDTO> { Data = _mapper.Map<UserDTO>(user) };
         }
 
         public async Task<ServiceResponse<string>> UpdateAsync(UserUpdateDTO dto)
         {
-            var user = await _context.Users.Include(x => x.Roles).FirstOrDefaultAsync(x => x.UserName.ToLower() == dto.UserName.ToLower());
+            var user = await _context.Users
+                .Include(u => u.Roles)
+                .FirstOrDefaultAsync(u => u.UserName.ToLower() == dto.UserName.ToLower());
 
             if (user == null)
-                return new ServiceResponse<string>() { Success = false, Data = "User not found" };
+                return new ServiceResponse<string> { Success = false, Message = "User not found" };
 
-            var roles = await _context.Roles.Where(x => dto.RoleIds.Contains(x.Id)).ToListAsync();
+            var roles = await _context.Roles
+                .Where(r => dto.RoleIds.Contains(r.Id))
+                .ToListAsync();
 
             user.Roles = roles;
 
             _context.Users.Update(user);
             await _context.SaveChangesAsync();
 
-            return new ServiceResponse<string>() { Data = "User updated successfully" };
+            return new ServiceResponse<string> { Data = "User updated successfully" };
         }
 
-        #region PrivateMethods
+        #region Private Methods
 
-        private async Task<bool> UserExists(string userName)
+        private void CreatePasswordHash(string password, out byte[] hash, out byte[] salt)
         {
-            if (await _context.Users.AnyAsync(x => x.UserName.ToLower() == userName.ToLower()))
-                return true;
-            return false;
-        }
-
-        private void CreatePasswordHash(string password, out byte[] passwordHash, out byte[] passwordSalt)
-        {
-            using (var hmac = new HMACSHA512())
-            {
-                passwordSalt = hmac.Key;
-                passwordHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
-            }
+            using var hmac = new HMACSHA512();
+            salt = hmac.Key;
+            hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
         }
 
         #endregion
